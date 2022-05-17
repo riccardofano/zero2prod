@@ -32,6 +32,7 @@ tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
 unicode-segmentation = "1"
 uuid = { version = "0.8.1", features = ["v4"] }
 validator = "0.14"
+linkify = "0.8"
 
 [dependencies.sqlx]
 version = "0.5.7"

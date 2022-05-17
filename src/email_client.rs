@@ -35,7 +35,7 @@ impl EmailClient {
         subject: &str,
         html_content: &str,
         text_content: &str,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), Box<dyn Error + 'static>> {
         let url = reqwest::Url::parse(&self.base_url)?.join("email")?;
         let request_body = SendEmailRequest {
             from: self.sender.as_ref(),
