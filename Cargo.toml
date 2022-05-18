@@ -34,6 +34,7 @@ uuid = { version = "0.8.1", features = ["v4"] }
 validator = "0.14"
 linkify = "0.8"
 rand = { version = "0.8", features = ["std_rng"] }
+thiserror = "1.0.31"
 
 [dependencies.sqlx]
 version = "0.5.7"
