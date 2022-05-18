@@ -1,7 +1,8 @@
 use once_cell::sync::Lazy;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use uuid::Uuid;
-use wiremock::MockServer;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use zero2prod::configuration::{get_configuration, DatabaseSettings};
 use zero2prod::startup::{get_connection_pool, Application};
@@ -65,6 +66,44 @@ impl TestApp {
         let plain_text = get_link(body["TextBody"].as_str().unwrap());
 
         ConfirmationLinks { html, plain_text }
+    }
+
+    /// Use the public API of the application under test to create
+    /// an unconfirmed subscriber.
+    pub async fn create_unconfirmed_subscriber(&self) -> ConfirmationLinks {
+        let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+        let _mock_guard = Mock::given(path("/email"))
+            .and(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .named("Create unconfirmed subscriber")
+            .expect(1)
+            .mount_as_scoped(&self.email_server)
+            .await;
+        self.post_subscriptions(body.into())
+            .await
+            .error_for_status()
+            .unwrap();
+
+        let email_request = &self
+            .email_server
+            .received_requests()
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        self.get_confirmation_links(email_request)
+    }
+
+    /// Use the public API of the application under test to create
+    /// an unconfirmed subscriber and then confirm them.
+    pub async fn create_confirmed_subscriber(&self) {
+        let confirmation_link = self.create_unconfirmed_subscriber().await;
+        reqwest::get(confirmation_link.html)
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
     }
 }
 
