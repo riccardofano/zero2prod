@@ -41,6 +41,7 @@ pub async fn confirm_subscriber(pool: &PgPool, subscriber_id: Uuid) -> Result<()
     Ok(())
 }
 
+#[tracing::instrument(name = "get subscriber id from token", skip(pool, subscription_token))]
 pub async fn get_subscriber_id_from_token(
     pool: &PgPool,
     subscription_token: &str,
