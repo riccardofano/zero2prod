@@ -1,5 +1,7 @@
-use actix_web::{web, HttpResponse, ResponseError};
+use actix_web::{http::header::HeaderMap, web, HttpRequest, HttpResponse, ResponseError};
 use anyhow::Context;
+use reqwest::header::{self, HeaderValue};
+use secrecy::Secret;
 use sqlx::PgPool;
 
 use crate::{domain::SubscriberEmail, email_client::EmailClient};
@@ -22,6 +24,8 @@ pub struct Content {
 pub enum PublishError {
     #[error("{0}")]
     ValidationError(String),
+    #[error("authentication failed")]
+    AuthError(#[source] anyhow::Error),
     #[error(transparent)]
     UnexpectedError(#[from] anyhow::Error),
 }
@@ -32,13 +36,32 @@ impl std::fmt::Debug for PublishError {
     }
 }
 
-impl ResponseError for PublishError {}
+impl ResponseError for PublishError {
+    fn error_response(&self) -> HttpResponse {
+        match self {
+            PublishError::ValidationError(_) => HttpResponse::new(reqwest::StatusCode::BAD_REQUEST),
+            PublishError::AuthError(_) => {
+                let mut response = HttpResponse::new(reqwest::StatusCode::UNAUTHORIZED);
+                let header_value = HeaderValue::from_str(r#"Basic realm="publish""#).unwrap();
+                response
+                    .headers_mut()
+                    .insert(header::WWW_AUTHENTICATE, header_value);
+                response
+            }
+            PublishError::UnexpectedError(_) => {
+                HttpResponse::new(reqwest::StatusCode::INTERNAL_SERVER_ERROR)
+            }
+        }
+    }
+}
 
 pub async fn publish_newsletter(
     body: web::Json<BodyData>,
     pool: web::Data<PgPool>,
     email_client: web::Data<EmailClient>,
+    request: HttpRequest,
 ) -> Result<HttpResponse, PublishError> {
+    let _credentials = basic_authentication(request.headers()).map_err(PublishError::AuthError)?;
     let subscribers = get_confirmed_subscribers(&pool).await?;
     for subscriber in subscribers {
         match subscriber {
@@ -95,4 +118,39 @@ async fn get_confirmed_subscribers(
     .collect();
 
     Ok(confirmed_subscribers)
+}
+
+struct Credentials {
+    username: String,
+    password: Secret<String>,
+}
+
+fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Error> {
+    let header_value = headers
+        .get("Authorization")
+        .context("the 'Authorization' header is missing")?
+        .to_str()
+        .context("the 'Authorization' header is not a valid UTF8 string")?;
+    let base64encoded_segment = header_value
+        .strip_prefix("Basic ")
+        .context("the authorization scheme was not 'Basic'")?;
+    let decoded_bytes = base64::decode_config(base64encoded_segment, base64::STANDARD)
+        .context("failed to base64-decode 'Basic' credentials")?;
+    let decoded_credentials = String::from_utf8(decoded_bytes)
+        .context("the decoded credentials string is not valid UTF8")?;
+
+    let mut credentials = decoded_credentials.splitn(2, ':');
+    let username = credentials
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("a username must be provided in 'Basic' auth"))?
+        .to_string();
+    let password = credentials
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("a password must be provided in 'Basic' auth"))?
+        .to_string();
+
+    Ok(Credentials {
+        username,
+        password: Secret::new(password),
+    })
 }
