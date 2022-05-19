@@ -1,8 +1,8 @@
 use actix_web::{http::header::HeaderMap, web, HttpRequest, HttpResponse, ResponseError};
 use anyhow::Context;
+use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use reqwest::header::{self, HeaderValue};
 use secrecy::{ExposeSecret, Secret};
-use sha3::Digest;
 use sqlx::PgPool;
 
 use crate::{domain::SubscriberEmail, email_client::EmailClient};
@@ -164,24 +164,37 @@ async fn validate_credentials(
     credentials: Credentials,
     pool: &PgPool,
 ) -> Result<uuid::Uuid, PublishError> {
-    let password_hash = sha3::Sha3_256::digest(credentials.password.expose_secret().as_bytes());
-    let password_hash = format!("{password_hash:x}");
-    let user_id: Option<_> = sqlx::query!(
+    let row: Option<_> = sqlx::query!(
         r#"
-        SELECT user_id
+        SELECT user_id, password_hash
         FROM users
-        WHERE username = $1 AND password_hash = $2
+        WHERE username = $1
         "#,
         credentials.username,
-        password_hash
     )
     .fetch_optional(pool)
     .await
-    .context("failed to perform a query to validate auth credentials")
+    .context("failed to perform a query to retrieve stored credentials")
     .map_err(PublishError::UnexpectedError)?;
 
-    user_id
-        .map(|record| record.user_id)
-        .ok_or_else(|| anyhow::anyhow!("invalid username or password"))
-        .map_err(PublishError::AuthError)
+    let (expected_password_hash, user_id) = match row {
+        Some(row) => (row.password_hash, row.user_id),
+        None => {
+            return Err(PublishError::AuthError(anyhow::anyhow!("unknown username")));
+        }
+    };
+
+    let expected_password_hash = PasswordHash::new(&expected_password_hash)
+        .context("failed to parse hash in PHC string format")
+        .map_err(PublishError::UnexpectedError)?;
+
+    Argon2::default()
+        .verify_password(
+            credentials.password.expose_secret().as_bytes(),
+            &expected_password_hash,
+        )
+        .context("invalid password")
+        .map_err(PublishError::AuthError)?;
+
+    Ok(user_id)
 }
