@@ -5,7 +5,9 @@ use reqwest::header::{self, HeaderValue};
 use secrecy::{ExposeSecret, Secret};
 use sqlx::PgPool;
 
-use crate::{domain::SubscriberEmail, email_client::EmailClient};
+use crate::domain::SubscriberEmail;
+use crate::email_client::EmailClient;
+use crate::telemetry::spawn_blocking_with_tracing;
 
 use super::error_chain_fmt;
 
@@ -170,19 +172,12 @@ async fn validate_credentials(
         .map_err(PublishError::UnexpectedError)?
         .ok_or_else(|| PublishError::AuthError(anyhow::anyhow!("unknown username")))?;
 
-    let expected_password_hash = PasswordHash::new(expected_password_hash.expose_secret())
-        .context("failed to parse hash in PHC string format")
-        .map_err(PublishError::UnexpectedError)?;
-
-    tracing::info_span!("Verify password hash")
-        .in_scope(|| {
-            Argon2::default().verify_password(
-                credentials.password.expose_secret().as_bytes(),
-                &expected_password_hash,
-            )
-        })
-        .context("invalid password")
-        .map_err(PublishError::AuthError)?;
+    spawn_blocking_with_tracing(move || {
+        verify_password_hash(expected_password_hash, credentials.password)
+    })
+    .await
+    .context("failed to spawn blocking task")
+    .map_err(PublishError::UnexpectedError)??;
 
     Ok(user_id)
 }
@@ -206,4 +201,29 @@ async fn get_stored_credentials(
     .map(|row| (row.user_id, Secret::new(row.password_hash)));
 
     Ok(row)
+}
+
+#[tracing::instrument(
+    name = "verify password hash",
+    skip(expected_password_hash, password_candidate)
+)]
+fn verify_password_hash(
+    expected_password_hash: Secret<String>,
+    password_candidate: Secret<String>,
+) -> Result<(), PublishError> {
+    let expected_password_hash = PasswordHash::new(expected_password_hash.expose_secret())
+        .context("failed to parse hash in PHC string format")
+        .map_err(PublishError::UnexpectedError)?;
+
+    tracing::info_span!("Verify password hash")
+        .in_scope(|| {
+            Argon2::default().verify_password(
+                password_candidate.expose_secret().as_bytes(),
+                &expected_password_hash,
+            )
+        })
+        .context("invalid password")
+        .map_err(PublishError::AuthError)?;
+
+    Ok(())
 }
