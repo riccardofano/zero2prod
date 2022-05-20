@@ -1,5 +1,6 @@
 application:
   port: 8000
+  hmac_secret: "super-duper-long-but-actually-fake-secret-key-you-thought-you-had-me"
 
 database:
   host: "localhost"
