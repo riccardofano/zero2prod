@@ -2,6 +2,7 @@ use actix_web::{web, HttpResponse};
 use actix_web_flash_messages::FlashMessage;
 use secrecy::{ExposeSecret, Secret};
 use sqlx::PgPool;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     authentication::{validate_credentials, AuthError, Credentials},
@@ -36,6 +37,17 @@ pub async fn change_password(
         return Ok(see_other("/admin/password"));
     }
     let username = get_username(user_id, &pool).await.map_err(e500)?;
+    let password_length = form.0.new_password.expose_secret().graphemes(true).count();
+
+    if password_length <= 12 {
+        FlashMessage::error("The new password must be longer than 12 characters.");
+        return Ok(see_other("/admin/password"));
+    }
+    if password_length > 128 {
+        FlashMessage::error("The new password must be shorter than 128 characters.");
+        return Ok(see_other("/admin/password"));
+    }
+
     let credentials = Credentials {
         username,
         password: form.0.current_password,
