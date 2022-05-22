@@ -160,7 +160,15 @@ impl TestApp {
             .get(&format!("{}/admin/password", &self.address))
             .send()
             .await
-            .expect("faield to execute request")
+            .expect("failed to execute request")
+    }
+
+    pub async fn get_change_password_html(&self) -> String {
+        self.get_change_password()
+            .await
+            .text()
+            .await
+            .expect("failed to get request text")
     }
 
     pub async fn post_change_password<Body>(&self, body: &Body) -> reqwest::Response
@@ -172,7 +180,7 @@ impl TestApp {
             .form(body)
             .send()
             .await
-            .expect("faield to execute request")
+            .expect("failed to execute request")
     }
 }
 
