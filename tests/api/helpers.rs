@@ -1,3 +1,4 @@
+use actix_web::rt::Runtime;
 use argon2::password_hash::SaltString;
 use argon2::{Algorithm, Argon2, Params, PasswordHasher, Version};
 use once_cell::sync::Lazy;
@@ -30,6 +31,7 @@ pub struct ConfirmationLinks {
 pub struct TestApp {
     pub address: String,
     pub port: u16,
+    pub db_name: String,
     pub db_pool: PgPool,
     pub email_server: MockServer,
     pub test_user: TestUser,
@@ -192,17 +194,54 @@ impl TestApp {
     }
 }
 
+impl Drop for TestApp {
+    fn drop(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let db_name = self.db_name.clone();
+
+        std::thread::spawn(move || {
+            let rt = Runtime::new().unwrap();
+            rt.block_on(async {
+                let config = get_configuration().expect("failed to read configuration");
+                let mut conn = PgConnection::connect_with(&config.database.without_db())
+                    .await
+                    .expect("Failed to connect to Postgres");
+
+                // Kick off open sessions (from the spawned app). This could be replaced
+                // by WITH (FORCE) in Postgres 13+.
+                conn.execute(&*format!(
+                    "SELECT pg_terminate_backend(pg_stat_activity.pid)
+                    FROM pg_stat_activity
+                    WHERE datname = '{}'
+                      AND pid <> pg_backend_pid();",
+                    db_name
+                ))
+                .await
+                .expect("Failed to disconnect other sessions");
+
+                conn.execute(&*format!("DROP DATABASE \"{}\";", db_name))
+                    .await
+                    .unwrap_or_else(|_| panic!("Failed to drop temporary database: {}", db_name));
+                let _ = tx.send(());
+            })
+        });
+
+        let _ = rx.recv();
+    }
+}
+
 pub async fn spawn_app() -> TestApp {
     Lazy::force(&TRACING);
 
     // Launch the mock server to stand in for Postmark's API
     let email_server = MockServer::start().await;
+    let db_name = Uuid::new_v4().to_string();
 
     // Randomize configuration to ensure test isolation
     let configuration = {
         let mut c = get_configuration().expect("failed to read configuration");
         // Use a different database for each test case
-        c.database.database_name = Uuid::new_v4().to_string();
+        c.database.database_name = db_name.clone();
         // Use a random OS port
         c.application.port = 0;
         // Use the mock server as email API
@@ -230,6 +269,7 @@ pub async fn spawn_app() -> TestApp {
     let test_app = TestApp {
         address,
         port,
+        db_name,
         db_pool: get_connection_pool(&configuration.database),
         email_server,
         test_user: TestUser::generate(),
