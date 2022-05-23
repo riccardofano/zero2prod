@@ -17,7 +17,7 @@ pub async fn send_newsletter_form(
 <html lang="en">
     <head>
         <meta http-equiv="content-type" content="text/html; charset=utf-8">
-        <title>Change Password</title>
+        <title>Send new newsletter</title>
     </head>
     <body>
         {msg_html}
