@@ -90,7 +90,7 @@ async fn newsletters_returns_400_for_invalid_data() {
 }
 
 #[tokio::test]
-async fn requests_missing_authorization_are_redirected() {
+async fn you_must_be_logged_in_to_publish_a_newsletter() {
     let app = spawn_app().await;
 
     let response = app
@@ -102,4 +102,11 @@ async fn requests_missing_authorization_are_redirected() {
         .await;
 
     assert_is_redirect_to(&response, "/login");
+}
+
+#[tokio::test]
+async fn you_must_be_logged_in_to_see_the_newsletter_form() {
+    let app = spawn_app().await;
+    let response = app.get_newsletters().await;
+    assert_is_redirect_to(&response, "/login")
 }

@@ -183,6 +183,14 @@ impl TestApp {
             .expect("failed to execute request")
     }
 
+    pub async fn get_newsletters(&self) -> reqwest::Response {
+        self.api_client
+            .get(&format!("{}/admin/newsletters", &self.address))
+            .send()
+            .await
+            .expect("failed to execute request")
+    }
+
     pub async fn post_newsletters<Body>(&self, body: &Body) -> reqwest::Response
     where
         Body: serde::Serialize,
