@@ -1,10 +1,12 @@
 use actix_web::http::header::ContentType;
 use actix_web::HttpResponse;
 use actix_web_flash_messages::IncomingFlashMessages;
+use uuid::Uuid;
 
 pub async fn send_newsletter_form(
     flash_messages: IncomingFlashMessages,
 ) -> Result<HttpResponse, actix_web::Error> {
+    let idempotency_key = Uuid::new_v4().to_string();
     let msg_html: String = flash_messages
         .iter()
         .map(|m| format!("<p><i>{}</i></p>", m.content()))
@@ -43,6 +45,7 @@ pub async fn send_newsletter_form(
                 placeholder="Add plain text content"
                 name="text"
             ></textarea>
+            <input hidden type="text" name="idempotency_key" value="{idempotency_key}" >
             <br>
             <button type="submit">Send newsletter</button>
         </form>

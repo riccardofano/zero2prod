@@ -355,6 +355,14 @@ impl TestUser {
         .await
         .expect("failed to create test user");
     }
+
+    pub async fn login(&self, app: &TestApp) {
+        let login_body = serde_json::json!({
+            "username": &self.username,
+            "password": &self.password
+        });
+        app.post_login(&login_body).await;
+    }
 }
 
 pub fn assert_is_redirect_to(response: &reqwest::Response, location: &str) {

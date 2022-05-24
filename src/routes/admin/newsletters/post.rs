@@ -6,18 +6,20 @@ use sqlx::PgPool;
 use crate::authentication::UserId;
 use crate::domain::SubscriberEmail;
 use crate::email_client::EmailClient;
-use crate::utils::{e500, see_other};
+use crate::idempotency::{get_saved_response, save_response, IdempotencyKey};
+use crate::utils::{e400, e500, see_other};
 
 #[derive(serde::Deserialize)]
 pub struct FormData {
     title: String,
     text: String,
     html: String,
+    idempotency_key: String,
 }
 
 #[tracing::instrument(
     name = "publish a newsletter issue"
-    skip(form, pool, email_client),
+    skip_all,
     fields(user_id=%*user_id)
 )]
 pub async fn publish_newsletter(
@@ -26,12 +28,28 @@ pub async fn publish_newsletter(
     pool: web::Data<PgPool>,
     email_client: web::Data<EmailClient>,
 ) -> Result<HttpResponse, actix_web::Error> {
+    let user_id = user_id.into_inner();
+    let FormData {
+        title,
+        text,
+        html,
+        idempotency_key,
+    } = form.0;
+    let idempotency_key: IdempotencyKey = idempotency_key.try_into().map_err(e400)?;
+    if let Some(saved_response) = get_saved_response(&pool, &idempotency_key, *user_id)
+        .await
+        .map_err(e500)?
+    {
+        FlashMessage::info("The newsletter issue has been published!").send();
+        return Ok(saved_response);
+    }
+
     let subscribers = get_confirmed_subscribers(&pool).await.map_err(e500)?;
     for subscriber in subscribers {
         match subscriber {
             Ok(subscriber) => {
                 email_client
-                    .send_email(&subscriber.email, &form.title, &form.html, &form.text)
+                    .send_email(&subscriber.email, &title, &html, &text)
                     .await
                     .with_context(|| {
                         format!(
@@ -52,7 +70,11 @@ pub async fn publish_newsletter(
         }
     }
     FlashMessage::info("The newsletter issue has been published!").send();
-    Ok(see_other("/admin/newsletters"))
+    let response = see_other("/admin/newsletters");
+    let response = save_response(&pool, &idempotency_key, *user_id, response)
+        .await
+        .map_err(e500)?;
+    Ok(response)
 }
 
 struct ConfirmedSubscriber {
