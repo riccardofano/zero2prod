@@ -191,6 +191,14 @@ impl TestApp {
             .expect("failed to execute request")
     }
 
+    pub async fn get_newsletters_html(&self) -> String {
+        self.get_newsletters()
+            .await
+            .text()
+            .await
+            .expect("failed to get request text")
+    }
+
     pub async fn post_newsletters<Body>(&self, body: &Body) -> reqwest::Response
     where
         Body: serde::Serialize,

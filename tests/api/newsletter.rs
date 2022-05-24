@@ -26,11 +26,14 @@ async fn newsletters_are_not_delivered_to_unconfirmed_subscribers() {
     });
 
     let response = app.post_newsletters(&newsletter_request_body).await;
-    assert_eq!(response.status().as_u16(), 200);
+    assert_is_redirect_to(&response, "/admin/newsletters");
+
+    let html_page = app.get_newsletters_html().await;
+    assert!(html_page.contains("<p><i>The newsletter issue has been published!</i></p>"));
 }
 
 #[tokio::test]
-async fn newsletters_are_delivered_to_confirmed() {
+async fn newsletters_are_delivered_to_confirmed_subscribers() {
     let app = spawn_app().await;
     app.create_confirmed_subscriber().await;
     let login_body = serde_json::json!({
@@ -52,41 +55,11 @@ async fn newsletters_are_delivered_to_confirmed() {
         "html": "<p>Newsletter body as HTML</p>",
     });
     let response = app.post_newsletters(&newsletter_request_body).await;
-    assert_eq!(response.status().as_u16(), 200);
+    assert_is_redirect_to(&response, "/admin/newsletters");
+
+    let html_page = app.get_newsletters_html().await;
+    assert!(html_page.contains("<p><i>The newsletter issue has been published!</i></p>"));
     // drop(Mock) verifies that we have sent the newsletter email
-}
-
-#[tokio::test]
-async fn newsletters_returns_400_for_invalid_data() {
-    let app = spawn_app().await;
-    let login_body = serde_json::json!({
-        "username": &app.test_user.username,
-        "password": &app.test_user.password
-    });
-    app.post_login(&login_body).await;
-    let test_cases = vec![
-        (
-            serde_json::json!({
-                "text": "Newsletter body as plain text",
-                "html": "<p>Newsletter body as HTML</p>",
-            }),
-            "missing title",
-        ),
-        (
-            serde_json::json!({ "title": "Newsletter!" }),
-            "missing content",
-        ),
-    ];
-
-    for (invalid_body, error_message) in test_cases {
-        let response = app.post_newsletters(&invalid_body).await;
-
-        assert_eq!(
-            response.status().as_u16(),
-            400,
-            "the API did not fail with 400 Bad Request when the payload was {error_message}"
-        );
-    }
 }
 
 #[tokio::test]
