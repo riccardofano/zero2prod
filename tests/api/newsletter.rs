@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::helpers::{assert_is_redirect_to, spawn_app};
 
 use uuid::Uuid;
@@ -115,4 +117,34 @@ async fn newsletter_creating_is_idempotent() {
     // Check if it's been published again
     let html_page = app.get_newsletters_html().await;
     assert!(html_page.contains("<p><i>The newsletter issue has been published!</i></p>"));
+}
+
+#[tokio::test]
+async fn concurrent_form_submission_is_handled_gracefully() {
+    let app = spawn_app().await;
+    app.create_confirmed_subscriber().await;
+    app.test_user.login(&app).await;
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(2)))
+        .expect(1)
+        .mount(&app.email_server)
+        .await;
+
+    let newsletter_request_body = serde_json::json!({
+        "title": "Newsletter title",
+        "text": "Newsletter body as plain text",
+        "html": "<p>Newsletter body as HTML</p>",
+        "idempotency_key": Uuid::new_v4().to_string(),
+    });
+    let response1 = app.post_newsletters(&newsletter_request_body);
+    let response2 = app.post_newsletters(&newsletter_request_body);
+    let (response1, response2) = tokio::join!(response1, response2);
+
+    assert_eq!(response1.status(), response2.status());
+    assert_eq!(
+        response1.text().await.unwrap(),
+        response2.text().await.unwrap()
+    );
 }
