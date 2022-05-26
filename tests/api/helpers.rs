@@ -11,6 +11,8 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use zero2prod::configuration::{get_configuration, DatabaseSettings};
+use zero2prod::email_client::EmailClient;
+use zero2prod::issue_delivery_worker::{try_execute_task, ExecutionOutcome};
 use zero2prod::startup::{get_connection_pool, Application};
 use zero2prod::telemetry::{get_subscriber, init_subscriber};
 
@@ -36,12 +38,24 @@ pub struct TestApp {
     pub port: u16,
     pub db_name: String,
     pub db_pool: PgPool,
+    pub email_client: EmailClient,
     pub email_server: MockServer,
     pub test_user: TestUser,
     pub api_client: reqwest::Client,
 }
 
 impl TestApp {
+    pub async fn dispatch_all_pending_emails(&self) {
+        loop {
+            if let ExecutionOutcome::EmptyQueue =
+                try_execute_task(&self.db_pool, &self.email_client)
+                    .await
+                    .unwrap()
+            {
+                break;
+            }
+        }
+    }
     pub async fn post_subscriptions(&self, body: String) -> reqwest::Response {
         self.api_client
             .post(&format!("{}/subscriptions", &self.address))
@@ -298,6 +312,7 @@ pub async fn spawn_app() -> TestApp {
         port,
         db_name,
         db_pool: get_connection_pool(&configuration.database),
+        email_client: configuration.email_client.client(),
         email_server,
         test_user: TestUser::generate(),
         api_client: client,
