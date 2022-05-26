@@ -46,6 +46,7 @@ urlencoding = "2.1.0"
 uuid = { version = "0.8.1", features = ["v4", "serde"] }
 validator = "0.14"
 actix-web-lab = "0.16.1"
+serde_urlencoded = "0.7.1"
 
 [dependencies.sqlx]
 version = "0.5.7"

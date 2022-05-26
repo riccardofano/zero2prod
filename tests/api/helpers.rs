@@ -1,6 +1,9 @@
 use actix_web::rt::Runtime;
 use argon2::password_hash::SaltString;
 use argon2::{Algorithm, Argon2, Params, PasswordHasher, Version};
+use fake::faker::internet::en::SafeEmail;
+use fake::faker::name::en::Name;
+use fake::Fake;
 use once_cell::sync::Lazy;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use uuid::Uuid;
@@ -77,7 +80,13 @@ impl TestApp {
     /// Use the public API of the application under test to create
     /// an unconfirmed subscriber.
     pub async fn create_unconfirmed_subscriber(&self) -> ConfirmationLinks {
-        let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+        let name: String = Name().fake();
+        let email: String = SafeEmail().fake();
+        let body = serde_urlencoded::to_string(&serde_json::json!({
+            "name": name,
+            "email": email
+        }))
+        .unwrap();
 
         let _mock_guard = Mock::given(path("/email"))
             .and(method("POST"))
@@ -86,7 +95,7 @@ impl TestApp {
             .expect(1)
             .mount_as_scoped(&self.email_server)
             .await;
-        self.post_subscriptions(body.into())
+        self.post_subscriptions(body)
             .await
             .error_for_status()
             .unwrap();

@@ -4,7 +4,11 @@ use crate::helpers::{assert_is_redirect_to, spawn_app};
 
 use uuid::Uuid;
 use wiremock::matchers::{any, method, path};
-use wiremock::{Mock, ResponseTemplate};
+use wiremock::{Mock, MockBuilder, ResponseTemplate};
+
+fn when_sending_an_email() -> MockBuilder {
+    Mock::given(path("/email")).and(method("POST"))
+}
 
 #[tokio::test]
 async fn newsletters_are_not_delivered_to_unconfirmed_subscribers() {
@@ -38,8 +42,7 @@ async fn newsletters_are_delivered_to_confirmed_subscribers() {
     app.create_confirmed_subscriber().await;
     app.test_user.login(&app).await;
 
-    Mock::given(path("/email"))
-        .and(method("POST"))
+    when_sending_an_email()
         .respond_with(ResponseTemplate::new(200))
         .expect(1)
         .mount(&app.email_server)
@@ -89,8 +92,7 @@ async fn newsletter_creating_is_idempotent() {
     // Login
     app.test_user.login(&app).await;
 
-    Mock::given(path("/email"))
-        .and(method("POST"))
+    when_sending_an_email()
         .respond_with(ResponseTemplate::new(200))
         .expect(1)
         .mount(&app.email_server)
@@ -125,8 +127,7 @@ async fn concurrent_form_submission_is_handled_gracefully() {
     app.create_confirmed_subscriber().await;
     app.test_user.login(&app).await;
 
-    Mock::given(path("/email"))
-        .and(method("POST"))
+    when_sending_an_email()
         .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(2)))
         .expect(1)
         .mount(&app.email_server)
@@ -147,4 +148,50 @@ async fn concurrent_form_submission_is_handled_gracefully() {
         response1.text().await.unwrap(),
         response2.text().await.unwrap()
     );
+}
+
+#[tokio::test]
+async fn transient_errors_do_not_cause_duplicate_deliveries_on_retries() {
+    let app = spawn_app().await;
+    let newsletter_request_body = serde_json::json!({
+        "title": "Newsletter title",
+        "text": "Newsletter body as plain text",
+        "html": "<p>Newsletter body as HTML</p>",
+        "idempotency_key": Uuid::new_v4().to_string(),
+    });
+
+    // Create 2 subscribers
+    app.create_confirmed_subscriber().await;
+    app.create_confirmed_subscriber().await;
+    app.test_user.login(&app).await;
+
+    // Email delivery fails on second subscriber
+    when_sending_an_email()
+        .respond_with(ResponseTemplate::new(200))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&app.email_server)
+        .await;
+    when_sending_an_email()
+        .respond_with(ResponseTemplate::new(500))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&app.email_server)
+        .await;
+
+    let response = app.post_newsletters(&newsletter_request_body).await;
+    assert_eq!(response.status().as_u16(), 500);
+
+    // Email delivery will succeed on both subscribers after retrying
+    when_sending_an_email()
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .named("Delivery retry")
+        .mount(&app.email_server)
+        .await;
+
+    let response = app.post_newsletters(&newsletter_request_body).await;
+    assert_eq!(response.status().as_u16(), 303);
+
+    // Mock drops and verifies
 }
